@@ -44,18 +44,30 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   }, []);
 
   const signOut = useCallback(async () => {
-    await supabase.auth.signOut();
-    queryClient.clear();
-    navigate("/login", { replace: true });
+    try {
+      await supabase.auth.signOut({ scope: "local" });
+    } catch {
+      // The local session is still cleared below if Supabase no longer knows it.
+    } finally {
+      setSession(null);
+      queryClient.clear();
+      navigate("/login", { replace: true });
+    }
   }, [navigate]);
 
   useEffect(() => {
     async function handleUnauthorized() {
       const returnTo = `${location.pathname}${location.search}${location.hash}`;
-      await supabase.auth.signOut();
-      queryClient.clear();
-      if (location.pathname !== "/login") {
-        navigate(`/login?next=${encodeURIComponent(returnTo)}`, { replace: true });
+      try {
+        await supabase.auth.signOut({ scope: "local" });
+      } catch {
+        // Continue clearing the local session after an expired or missing remote session.
+      } finally {
+        setSession(null);
+        queryClient.clear();
+        if (location.pathname !== "/login") {
+          navigate(`/login?next=${encodeURIComponent(returnTo)}`, { replace: true });
+        }
       }
     }
     window.addEventListener("finpilot:unauthorized", handleUnauthorized);

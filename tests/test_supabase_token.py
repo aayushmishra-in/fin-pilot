@@ -5,7 +5,8 @@ from uuid import uuid4
 
 import jwt
 import pytest
-from cryptography.hazmat.primitives.asymmetric import rsa
+from cryptography.hazmat.primitives.asymmetric import ec, rsa
+from pydantic import SecretStr
 
 from app.core import security
 
@@ -79,6 +80,36 @@ async def test_accepts_valid_supabase_token_without_network(monkeypatch) -> None
     monkeypatch.setattr(security.settings, "supabase_jwt_secret", None)
     monkeypatch.setattr(security, "_jwks_client", lambda: FakeJwksClient(public_key))
     token = jwt.encode(expected, private_key, algorithm="RS256")
+
+    claims = await security.verify_supabase_access_token(token)
+
+    assert claims["sub"] == expected["sub"]
+
+
+async def test_accepts_es256_token_when_legacy_secret_is_configured(monkeypatch) -> None:
+    private_key = ec.generate_private_key(ec.SECP256R1())
+    public_key = private_key.public_key()
+    expected = _claims()
+    monkeypatch.setattr(security.settings, "supabase_url", "https://example.supabase.co")
+    monkeypatch.setattr(
+        security.settings,
+        "supabase_jwt_secret",
+        SecretStr("legacy-secret-for-testing-only-32-bytes"),
+    )
+    monkeypatch.setattr(security, "_jwks_client", lambda: FakeJwksClient(public_key))
+    token = jwt.encode(expected, private_key, algorithm="ES256")
+
+    claims = await security.verify_supabase_access_token(token)
+
+    assert claims["sub"] == expected["sub"]
+
+
+async def test_accepts_hs256_token_with_legacy_secret(monkeypatch) -> None:
+    expected = _claims()
+    secret = "legacy-secret-for-testing-only-32-bytes"
+    monkeypatch.setattr(security.settings, "supabase_url", "https://example.supabase.co")
+    monkeypatch.setattr(security.settings, "supabase_jwt_secret", SecretStr(secret))
+    token = jwt.encode(expected, secret, algorithm="HS256")
 
     claims = await security.verify_supabase_access_token(token)
 

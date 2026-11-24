@@ -66,6 +66,8 @@ export function CompanyPickerPage() {
     return <LoadingState label="Loading your company memberships" />;
   }
   if (companies.isError || user.isError) {
+    const requestError = companies.error ?? user.error;
+    const needsSignIn = requestError instanceof ApiError && requestError.status === 401;
     return (
       <main className="mx-auto max-w-xl px-5 py-16">
         <Card className="space-y-4 p-6">
@@ -78,12 +80,16 @@ export function CompanyPickerPage() {
           </ErrorMessage>
           <Button
             onClick={() => {
+              if (needsSignIn) {
+                void signOut();
+                return;
+              }
               void companies.refetch();
               void user.refetch();
             }}
             variant="secondary"
           >
-            Try again
+            {needsSignIn ? "Sign in again" : "Try again"}
           </Button>
         </Card>
       </main>

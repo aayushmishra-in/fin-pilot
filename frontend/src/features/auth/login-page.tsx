@@ -1,7 +1,7 @@
 import { zodResolver } from "@hookform/resolvers/zod";
 import { useMutation } from "@tanstack/react-query";
 import { ArrowRight, LoaderCircle } from "lucide-react";
-import { useState } from "react";
+import { useRef, useState } from "react";
 import { useForm } from "react-hook-form";
 import { Link, useNavigate, useSearchParams } from "react-router-dom";
 import { z } from "zod";
@@ -24,6 +24,8 @@ export function LoginPage() {
   const [searchParams] = useSearchParams();
   const [nextPath] = useState(() => getSafeReturnPath(searchParams.get("next")) ?? takeReturnPath());
   const [googleError, setGoogleError] = useState(false);
+  const [googlePending, setGooglePending] = useState(false);
+  const googlePendingRef = useRef(false);
   const form = useForm<LoginFields>({
     resolver: zodResolver(loginSchema),
     defaultValues: { email: "", password: "" },
@@ -37,10 +39,23 @@ export function LoginPage() {
   });
 
   async function continueWithGoogle() {
+    if (googlePendingRef.current) return;
+    googlePendingRef.current = true;
+    setGooglePending(true);
     setGoogleError(false);
     rememberReturnPath(nextPath);
-    const { error } = await signInWithGoogle(`${window.location.origin}/auth/callback`);
-    if (error) setGoogleError(true);
+    try {
+      const { error } = await signInWithGoogle(`${window.location.origin}/auth/callback`);
+      if (error) {
+        setGoogleError(true);
+        googlePendingRef.current = false;
+        setGooglePending(false);
+      }
+    } catch {
+      setGoogleError(true);
+      googlePendingRef.current = false;
+      setGooglePending(false);
+    }
   }
 
   return (
@@ -52,7 +67,7 @@ export function LoginPage() {
     >
       <div className="space-y-5">
         {signInMutation.isError && <ErrorMessage>Email or password is incorrect. Check your details and try again.</ErrorMessage>}
-        {googleError && <ErrorMessage>Google sign-in did not complete. Try again or use your email and password.</ErrorMessage>}
+        {(googleError || searchParams.has("oauthError")) && <ErrorMessage>Google sign-in could not be verified. Start one new attempt, or use your email and password.</ErrorMessage>}
         <form className="space-y-5" noValidate onSubmit={form.handleSubmit((values) => signInMutation.mutate(values))}>
           <div className="space-y-2">
             <label className="text-sm font-medium text-foreground-body" htmlFor="login-email">Email address</label>
@@ -73,7 +88,7 @@ export function LoginPage() {
           </Button>
         </form>
         <div className="relative py-1 text-center text-xs text-muted"><span className="bg-surface px-3">or</span><span className="absolute inset-x-0 top-1/2 -z-10 border-t border-line" /></div>
-        <Button className="w-full" disabled={signInMutation.isPending} onClick={() => void continueWithGoogle()} size="lg" variant="secondary">Continue with Google</Button>
+        <Button className="w-full" disabled={signInMutation.isPending || googlePending} onClick={() => void continueWithGoogle()} size="lg" variant="secondary">{googlePending ? "Connecting to Google" : "Continue with Google"}</Button>
       </div>
     </AuthLayout>
   );

@@ -25,6 +25,7 @@ class Settings(BaseSettings):
     digest_smtp_starttls: bool = True
     digest_email_from: EmailStr | None = None
     supabase_url: str | None = None
+    supabase_anon_key: SecretStr | None = None
     supabase_jwt_secret: SecretStr | None = None
     app_public_url: str = "http://127.0.0.1:5173"
     smtp_host: str | None = None

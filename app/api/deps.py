@@ -1,3 +1,4 @@
+import logging
 import uuid
 from collections.abc import AsyncGenerator
 
@@ -10,10 +11,11 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.db import AsyncSessionLocal
 from app.core.permissions import Permission, ROLE_PERMISSIONS
-from app.core.security import verify_supabase_access_token
+from app.core.security import get_supabase_user, verify_supabase_access_token
 from app.models import CompanyMember, User
 
 bearer_scheme = HTTPBearer(auto_error=False)
+logger = logging.getLogger(__name__)
 
 
 async def get_db() -> AsyncGenerator[AsyncSession, None]:
@@ -38,12 +40,20 @@ async def get_verified_token_claims(
         raise credentials_exception
     try:
         return await verify_supabase_access_token(credentials.credentials)
-    except Exception:
+    except Exception as error:
+        logger.warning(
+            "Supabase access token verification rejected",
+            extra={
+                "error_type": type(error).__name__,
+                "error_message": str(error)[:500],
+            },
+        )
         raise credentials_exception from None
 
 
 async def get_current_user(
     claims: dict[str, object] = Depends(get_verified_token_claims),
+    credentials: HTTPAuthorizationCredentials | None = Depends(bearer_scheme),
     db: AsyncSession = Depends(get_db),
 ) -> User:
     credentials_exception = HTTPException(
@@ -55,11 +65,13 @@ async def get_current_user(
     auth_user_id = claims.get("sub")
     email = claims.get("email")
     if not isinstance(auth_user_id, str) or not isinstance(email, str) or not email:
+        logger.warning("Supabase access token is missing required identity claims")
         raise credentials_exception
 
     try:
         auth_uuid = uuid.UUID(auth_user_id)
     except ValueError:
+        logger.warning("Supabase access token has an invalid subject claim")
         raise credentials_exception from None
 
     result = await db.execute(select(User).where(User.auth_user_id == auth_uuid))
@@ -116,12 +128,50 @@ async def get_current_user(
         result = await db.execute(select(User).where(User.auth_user_id == auth_uuid))
         user = result.scalar_one_or_none()
         if user is None:
+            normalized_email = email.strip().casefold()
+            legacy_user = await db.scalar(
+                select(User).where(
+                    User.email == normalized_email,
+                    User.auth_user_id.is_(None),
+                )
+            )
+            if (
+                legacy_user is not None
+                and credentials is not None
+                and _supabase_email_is_confirmed(
+                    await get_supabase_user(credentials.credentials),
+                    expected_id=auth_uuid,
+                    expected_email=normalized_email,
+                )
+            ):
+                legacy_user.auth_user_id = auth_uuid
+                await db.commit()
+                await db.refresh(legacy_user)
+                return legacy_user
             raise HTTPException(
                 status_code=status.HTTP_409_CONFLICT,
-                detail="A local account already uses this email. Recreate the account through Supabase Auth.",
+                detail="A local account already uses this email. Automatic linking requires a confirmed Supabase email.",
             ) from None
 
     return user
+
+
+def _supabase_email_is_confirmed(
+    auth_user: dict[str, object], *, expected_id: uuid.UUID, expected_email: str
+) -> bool:
+    confirmed_at = auth_user.get("email_confirmed_at") or auth_user.get("confirmed_at")
+    auth_email = auth_user.get("email")
+    try:
+        returned_id = uuid.UUID(str(auth_user.get("id")))
+    except ValueError:
+        return False
+    return (
+        returned_id == expected_id
+        and isinstance(auth_email, str)
+        and auth_email.strip().casefold() == expected_email
+        and isinstance(confirmed_at, str)
+        and bool(confirmed_at.strip())
+    )
 
 
 async def get_current_company_member(
