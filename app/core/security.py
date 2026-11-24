@@ -1,5 +1,8 @@
 import asyncio
+import json
 from functools import lru_cache
+from urllib.error import HTTPError, URLError
+from urllib.request import Request, urlopen
 from uuid import UUID
 
 import jwt
@@ -23,14 +26,14 @@ def _decode_supabase_token(token: str) -> dict[str, object]:
     issuer = f"{(settings.supabase_url or '').rstrip('/')}/auth/v1"
     header = jwt.get_unverified_header(token)
     algorithm = header.get("alg")
-    if settings.supabase_jwt_secret is not None:
-        if algorithm != "HS256":
-            raise PyJWTError("Unsupported legacy JWT algorithm")
+    if algorithm == "HS256":
+        if settings.supabase_jwt_secret is None:
+            raise PyJWTError("SUPABASE_JWT_SECRET is required for HS256 tokens")
         key = settings.supabase_jwt_secret.get_secret_value()
-    else:
-        if algorithm not in {"RS256", "ES256"}:
-            raise PyJWTError("Unsupported asymmetric JWT algorithm")
+    elif algorithm in {"RS256", "ES256"}:
         key = _jwks_client().get_signing_key_from_jwt(token).key
+    else:
+        raise PyJWTError("Unsupported Supabase JWT algorithm")
 
     claims = jwt.decode(
         token,
@@ -51,3 +54,28 @@ def _decode_supabase_token(token: str) -> dict[str, object]:
 
 async def verify_supabase_access_token(token: str) -> dict[str, object]:
     return await asyncio.to_thread(_decode_supabase_token, token)
+
+
+def _get_supabase_user(access_token: str) -> dict[str, object]:
+    if not settings.supabase_url or settings.supabase_anon_key is None:
+        return {}
+
+    request = Request(
+        f"{settings.supabase_url.rstrip('/')}/auth/v1/user",
+        headers={
+            "apikey": settings.supabase_anon_key.get_secret_value(),
+            "Authorization": f"Bearer {access_token}",
+            "Accept": "application/json",
+        },
+    )
+    try:
+        with urlopen(request, timeout=5) as response:
+            data = json.loads(response.read())
+    except (HTTPError, URLError, TimeoutError, json.JSONDecodeError, OSError):
+        return {}
+    return data if isinstance(data, dict) else {}
+
+
+async def get_supabase_user(access_token: str) -> dict[str, object]:
+    """Fetch trusted Auth user fields that are not present in the access JWT."""
+    return await asyncio.to_thread(_get_supabase_user, access_token)

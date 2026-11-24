@@ -1,7 +1,9 @@
-import { Navigate, useLocation } from "react-router-dom";
+import { Navigate, useLocation, useSearchParams } from "react-router-dom";
 import type { ReactNode } from "react";
 
 import { LoadingState } from "../components/ui/feedback";
+import { ApiError } from "../api/errors";
+import { getSafeReturnPath } from "../lib/auth-return-path";
 import { useAuth } from "./auth-context";
 import { useCompanies } from "../features/companies/hooks";
 
@@ -16,16 +18,23 @@ export function RequireAuthentication({ children }: { children: ReactNode }) {
 
 export function RedirectAuthenticated({ children }: { children: ReactNode }) {
   const { isAuthenticated, isLoading } = useAuth();
+  const [searchParams] = useSearchParams();
+  const nextPath = getSafeReturnPath(searchParams.get("next"));
   if (isLoading) return <LoadingState label="Checking your session" />;
-  if (isAuthenticated) return <Navigate to="/" replace />;
+  if (isAuthenticated && !searchParams.has("oauthError")) {
+    return <Navigate to={nextPath ?? "/"} replace />;
+  }
   return children;
 }
 
 export function HomeRedirect() {
-  const { isAuthenticated, isLoading } = useAuth();
-  const companies = useCompanies(isAuthenticated);
+  const { isAuthenticated, isLoading, signOut } = useAuth();
+  const [searchParams] = useSearchParams();
+  const oauthError = searchParams.has("error") || searchParams.has("error_code");
+  const companies = useCompanies(isAuthenticated && !oauthError);
 
   if (isLoading) return <LoadingState label="Checking your session" />;
+  if (oauthError) return <Navigate to="/login?oauthError=1" replace />;
   if (!isAuthenticated) return <Navigate to="/login" replace />;
   if (companies.isPending) return <LoadingState label="Opening your workspace" />;
   if (companies.isError) {
@@ -35,10 +44,16 @@ export function HomeRedirect() {
         <p className="mt-2 text-sm text-muted">Check your connection and try again.</p>
         <button
           className="mt-5 text-sm font-semibold text-accent underline underline-offset-4"
-          onClick={() => void companies.refetch()}
+          onClick={() => {
+            if (companies.error instanceof ApiError && companies.error.status === 401) {
+              void signOut();
+              return;
+            }
+            void companies.refetch();
+          }}
           type="button"
         >
-          Try again
+          {companies.error instanceof ApiError && companies.error.status === 401 ? "Sign in again" : "Try again"}
         </button>
       </main>
     );

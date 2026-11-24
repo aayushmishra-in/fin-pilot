@@ -35,6 +35,11 @@ vi.mock("../lib/supabase", () => {
         resetPasswordForEmail: async () => ({ error: null, data: {} }),
         updateUser: async () => ({ error: null, data: {} }),
         signInWithOAuth: async () => ({ error: null, data: {} }),
+        oauth: {
+          getAuthorizationDetails: vi.fn(),
+          approveAuthorization: vi.fn(),
+          denyAuthorization: vi.fn(),
+        },
       },
     },
   };

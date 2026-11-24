@@ -21,9 +21,15 @@ from app.api.routes.memberships import router as memberships_router
 from app.api.routes.transactions import router as transactions_router
 from app.core.config import settings
 from app.core.logging import configure_logging
+from app.mcp.server import MCPBundle, build_mcp_bundle
+from app.mcp.settings import mcp_settings
 
 configure_logging()
 logger = logging.getLogger(__name__)
+
+mcp_bundle: MCPBundle | None = (
+    build_mcp_bundle() if mcp_settings.enabled else None
+)
 
 
 @asynccontextmanager
@@ -37,9 +43,16 @@ async def lifespan(app: FastAPI):
         max_retries=0,
         timeout=30.0,
     )
-    yield
-    await app.state.chat_client.close()
-    await app.state.redis.close()
+    try:
+        if mcp_bundle is None:
+            yield
+        else:
+            mcp_bundle.runtime.redis = app.state.redis
+            async with mcp_bundle.server.session_manager.run():
+                yield
+    finally:
+        await app.state.chat_client.close()
+        await app.state.redis.close()
 
 
 app = FastAPI(title="FinPilot", lifespan=lifespan)
@@ -95,3 +108,9 @@ async def request_context_middleware(request: Request, call_next):
 @app.get("/health")
 async def health():
     return {"status": "ok"}
+
+
+if mcp_bundle is not None:
+    # The mounted SDK app has its own /mcp and OAuth metadata routes. Mounting it
+    # last preserves every existing FinPilot route and OpenAPI path.
+    app.mount("/", mcp_bundle.http_app, name="mcp")

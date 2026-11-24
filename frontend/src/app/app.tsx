@@ -28,6 +28,9 @@ const ResetPasswordPage = lazy(() =>
 const AuthCallbackPage = lazy(() =>
   import("../features/auth/auth-callback-page").then((module) => ({ default: module.AuthCallbackPage })),
 );
+const OAuthConsentPage = lazy(() =>
+  import("../features/auth/oauth-consent-page").then((module) => ({ default: module.OAuthConsentPage })),
+);
 const CompanySettingsPage = lazy(() =>
   import("../features/companies/company-settings-page").then((module) => ({ default: module.CompanySettingsPage })),
 );
@@ -80,6 +83,16 @@ export function AppRoutes() {
       <Route path="/forgot-password" element={<LoadPage><ForgotPasswordPage /></LoadPage>} />
       <Route path="/reset-password" element={<LoadPage><ResetPasswordPage /></LoadPage>} />
       <Route path="/auth/callback" element={<LoadPage><AuthCallbackPage /></LoadPage>} />
+      <Route
+        path="/oauth/consent"
+        element={
+          <LoadPage>
+            <RequireAuthentication>
+              <OAuthConsentPage />
+            </RequireAuthentication>
+          </LoadPage>
+        }
+      />
       <Route path="/invite/:token" element={<LoadPage><InvitePage /></LoadPage>} />
       <Route
         path="/login"
