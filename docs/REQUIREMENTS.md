@@ -8,7 +8,7 @@
 
 ## Product direction
 
-**Project spec:** FinPilot is a multi-tenant financial operations app for small businesses. The required backend features—constrained financial Q&A, anomaly explanations, and weekly digests—are implemented. The current build adds the frontend defined in `docs/FRONTEND_ARCHITECTURE.md`, including same-origin local/container serving. Broader deployment automation remains outside this build.
+**Project spec:** FinPilot is a multi-tenant financial operations app for small businesses. The required backend features—constrained financial Q&A, anomaly explanations, and weekly digests—are implemented. The product frontend is implemented. A Vercel/Render deployment configuration is prepared; provisioning, schema initialization, live auth verification, and the public URL are still outstanding.
 
 ## Current functional baseline
 
@@ -16,7 +16,7 @@
 
 ## Planned product scope
 
-**Project spec:** The required backend scope is implemented. The categorization evaluation harness exists but has not been run against a real labeled sample. Frontend implementation is active under the current task. Stretch forecasting and recommendations follow Tier 1 and Tier 2.
+**Project spec:** The required backend and frontend scopes are implemented. The categorization evaluation harness exists but has not been run against a real labeled sample. Deployment and production acceptance remain. Stretch forecasting and recommendations follow Tier 1 and Tier 2.
 
 ## Constraints and design principles
 
@@ -37,6 +37,7 @@
 - **Resolved for frontend company context:** New companies require a current ISO 4217 currency code; legacy companies may be assigned one by an owner. The value is write-once because the ledger has no currency conversion. The existing two-decimal amount precision remains the v1 contract.
 - **Resolved for invoice review:** Uploaded invoices require purchase/sale direction. Owners/accountants confirm extraction after required fields are present. Confirmation does not create a transaction or change cash-flow metrics; cash movements must be recorded separately. Members can download invoice files only through a company-scoped API endpoint.
 - **Resolved for frontend transaction lists:** The main transaction endpoint is offset-paginated (default 50, maximum 200), returns a filtered total and `has_more`, and supports date, category, categorization status, source, direction, and description search filters. Requests cap offsets at 100,000 and use a 5-second statement timeout. Company list responses include the caller's role for presentation; server-side authorization remains enforced.
-- **Resolved for v1 authentication:** Access tokens expire after 30 minutes and there is no refresh token. The client must return to login after expiry; refresh sessions are deferred.
+- **Historical authentication decision — no longer authoritative:** This line described the former API-issued JWT flow. The current checkout uses Supabase Auth and validates Supabase access tokens in the API. The Supabase client owns session renewal; real sign-in, token renewal, recovery, and API authorization still need a live smoke test. See `docs/FRONTEND_ARCHITECTURE.md` for the older contract and `docs/DEPLOYMENT.md` for the release gate.
 - **Open engineering choice:** Categorization confidence calibration from a real labeled sample remains pending.
 - **Resolved:** Python 3.13 is the supported runtime, matching project metadata and the worker image. The container image build remains unverified.
+- **Open release gate:** The current checkout uses Supabase Auth, while the historical frontend architecture brief describes an earlier API-issued JWT flow. A real Supabase sign-in/API authorization smoke test is required before calling the hosted product complete.

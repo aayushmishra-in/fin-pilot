@@ -6,10 +6,10 @@ Repository facts below were checked against the source and configuration. Histor
 
 - **API — verified:** FastAPI with Pydantic v2 schemas; routes are mounted under `/api/v1`.
 - **Data — verified:** PostgreSQL-oriented SQLAlchemy models and async sessions, `asyncpg`, and Alembic migrations. The Compose database image is PostgreSQL 16.
-- **Jobs — verified:** Redis and an arq worker. Compose defines PostgreSQL, Redis, and the worker; it does not define an API service.
+- **Jobs — verified:** Redis and an arq worker. Compose defines PostgreSQL, Redis, the API, and the worker; the API and worker mount the same local uploads directory.
 - **LLM — verified:** The invoice, categorization, financial Q&A, anomaly explanation, and weekly digest workers call Anthropic's configurable Haiku-class model. Q&A receives only a question plus allowed expense category names; digest summarization receives computed aggregate facts.
 - **Storage — verified:** Uploaded files are written to a local upload directory; the database stores a file reference. The service boundary is intended to make a future storage-backend change local to that service.
-- **Auth — verified:** JWT-based authentication using the configured security dependencies; company memberships carry owner, accountant, or viewer roles.
+- **Auth — current checkout:** The frontend uses Supabase Auth; the API validates Supabase access tokens and maps provider identities to local users. Company memberships carry owner, accountant, or viewer roles. The real Supabase sign-in flow has not been smoke-tested from this checkout.
 
 **Runtime alignment — verified:** `pyproject.toml` requires Python `>=3.13`, and the worker Dockerfile now uses Python 3.13. A Docker image build has not yet been run.
 
@@ -101,7 +101,7 @@ frontend/           Vite/React single-page app, generated API schema, and produc
 app/scripts/export_openapi.py  writes the OpenAPI contract used for frontend type generation
 alembic/            schema migration scripts
 docs/               requirements, architecture, engineering, learning, and handoff docs
-docker-compose.yml  PostgreSQL, Redis, and worker services
+docker-compose.yml  PostgreSQL, Redis, API, and worker services
 ```
 
 ## Design decisions and boundaries
@@ -117,6 +117,15 @@ docker-compose.yml  PostgreSQL, Redis, and worker services
 - **Verified:** Pytest unit and PostgreSQL API/worker tests exist. The suite was run against the guarded `finpilot_test` database; no real Anthropic call is made by tests. One warning remains from the installed AnyIO pytest plugin's use of a deprecated pytest alias.
 
 The category/categorization, CSV import fingerprint, and financial metric index migrations were manually reviewed and each was applied, downgraded, and reapplied on `finpilot_test`. The Q&A audit migration and weekly digest/outbox migration were manually reviewed and applied to `finpilot_test` by the test setup. Application database state is unresolved; no application database migration was run for this task. No schema migration was added in the preceding baseline-hardening milestone.
+
+## Deployment readiness
+
+- **Prepared, not deployed:** `frontend/vercel.mjs` configures the Vite SPA fallback and proxies `/api/*` to `FINPILOT_API_ORIGIN`. `render.yaml` describes the API/worker service, PostgreSQL, Redis/Key Value, and a persistent upload disk.
+- The first hosted layout runs the API and worker in one Render web service so both processes can read the same upload disk. It is a single-instance project deployment; separating the services requires shared object storage.
+- The Render Blueprint does not auto-apply Alembic migrations. Migration review and explicit approval are required before the hosted schema is initialized.
+- **Verified locally — 2026-11-24:** Docker API and worker images build; Compose starts PostgreSQL, Redis, API, and worker; `/health` returns 200; the database-backed product suite passes 178 tests. Docker context exclusions keep frontend dependencies, tests, and generated artifacts out of the backend image.
+- **Not verified:** External Supabase authentication, live Anthropic calls, cloud service provisioning, hosted migration execution, and production URL. Frontend E2E currently mocks Supabase and API requests.
+- **Documentation mismatch to resolve:** `docs/FRONTEND_ARCHITECTURE.md` still describes the earlier API-issued JWT/register-login contract. Current source has Supabase Auth and only `GET /auth/me` on the FinPilot API; validate the current auth behavior before release, then reconcile the historical brief.
 
 ## Layer 2 — LLM categorization fallback
 
