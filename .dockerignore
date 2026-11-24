@@ -1,2 +1,17 @@
 .*
 !.dockerignore
+
+# Only package the API, worker, and their runtime files.
+frontend/
+tests/
+docs/
+demo/
+output/
+tmp/
+**/node_modules/
+**/dist/
+**/build/
+**/.pytest_cache/
+**/.pytest-tmp-validation/
+**/playwright-report/
+**/test-results/
