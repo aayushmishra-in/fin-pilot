@@ -1,64 +1,80 @@
 # FinPilot deployment
 
-Status: deployment configuration is in the repository; cloud services and a public URL have not yet been created.
+Status: deployment files target a free hosted setup. Cloud services, credentials, reviewed schema setup, and the public URL still need to be configured by the project owner.
 
-## Hosting layout
+## Free hosting layout
 
-- **Vercel** serves the Vite/React app from the `frontend/` directory. `frontend/vercel.mjs` sends `/api/*` requests to the configured backend origin and serves `index.html` for client-side routes.
-- **Render** runs the API and arq worker together in the `finpilot-api` Docker web service. They share `/app/uploads`, which preserves the current invoice upload/download flow and lets the worker read the file.
-- **Render PostgreSQL and Key Value** provide the database and Redis queue. The Render Blueprint connects the app to both using private service URLs.
-- **Supabase Auth** remains the identity provider. The browser signs in with the Supabase public URL and anon key; the API validates the Supabase access token and maps the auth identity to the FinPilot user record.
-- **Anthropic** provides the current constrained invoice extraction, transaction categorization, financial Q&A planning, anomaly phrasing, and digest summary calls.
+- **Vercel Hobby** serves the React/Vite website. Its `/api/*` rewrite sends API calls to Render while keeping one browser origin.
+- **Render Free** runs FastAPI and the arq worker together in one Docker web service. The service has an ephemeral filesystem and sleeps after inactivity, so it must not hold uploaded files or be treated as always-on.
+- **Supabase Free** supplies the existing Auth project, PostgreSQL, and a private Storage bucket. Use the Supabase **session pooler** connection string for `DATABASE_URL` so the Render service can connect over IPv4. The application stores uploaded invoices and imported CSVs in Supabase Storage when `STORAGE_BACKEND=supabase`.
+- **Upstash Redis Free** supplies the arq queue and rate-limit counters. Use its TLS connection string for `REDIS_URL`.
+- **Anthropic** supplies the app's AI features. API usage may be metered even when the hosting tiers are free.
 
-This first hosted arrangement intentionally runs the API and worker as one Render service. The upload disk is attached to that service, so the invoice worker can read the same files without an object-storage rewrite. Keep it at one instance. Splitting the API and worker later requires shared object storage or a different storage backend.
+This is one product with a separately hosted browser bundle and API process. The browser only calls the Vercel origin; Vercel proxies `/api` to the API. Auth remains Supabase Auth. Locally, Docker Compose runs the same API and worker alongside PostgreSQL and Redis, while Vite serves the browser app separately and proxies `/api` to the local API. Local uploads use disk; hosted uploads use Supabase Storage.
 
-## Vercel setup
+## Free-tier behavior to expect
 
-1. Connect the repository to a Vercel project and set **Root Directory** to `frontend`.
-2. Use the Vite build settings from `frontend/vercel.mjs`: `npm ci`, `npm run build`, output directory `dist`.
-3. Add these project environment variables to Production and Preview:
-   - `FINPILOT_API_ORIGIN`: the HTTPS origin assigned to the Render `finpilot-api` service, without a path (for example, `https://finpilot-api.onrender.com`).
+- Render Free sleeps after about 15 minutes without inbound traffic, and the next request may wait roughly a minute for startup. A sleeping instance is not continuously available.
+- The API and worker share that one instance. Worker cron schedules cannot fire while it sleeps. Weekly digest scheduling and delivery sweeps run at worker startup as well as on their normal schedule, so they catch up after a wake/restart; actual delivery can still be delayed until then.
+- Supabase Free projects may pause after a period of inactivity, and free database/storage quotas apply. Upstash also has free command/bandwidth quotas. Check the current provider dashboard limits before relying on the service.
+- This is suitable for a free project/demo that can tolerate cold starts and delayed background work. It does not provide guaranteed always-on access.
+
+## Prepare Supabase
+
+1. Use the existing Supabase project. In Storage, create a **private** bucket named `finpilot-files` (or set `SUPABASE_STORAGE_BUCKET` to the chosen name).
+2. Leave the bucket private. The backend uses the service-role key only for server-side object access; never put it in Vercel or browser code.
+3. Copy the project URL, anon/public key, and service-role key for Render. The anon key is also used by the Vercel frontend.
+4. Copy the session-mode pooler URI from the Supabase database connection settings. Put its password in the connection URI without committing it. Configure the URI as `DATABASE_URL` on Render; the app adapts `postgresql://` to its async driver.
+5. Review every pending Alembic migration before applying it. After the target database and migration chain are confirmed, initialize the new database manually from a trusted local environment using that hosted database URL:
+
+   ```powershell
+   uv run alembic upgrade head
+   uv run python -m app.scripts.seed_categories
+   ```
+
+   Do not run those commands against `finpilot_test`; test fixtures own that database. No migration runs automatically during deployment.
+
+## Prepare Upstash
+
+Create a Redis database in a nearby region and copy its TLS connection URL as `REDIS_URL`. Keep the value private. The arq worker and API use the same database; do not reuse the local Redis database.
+
+## Deploy the API and worker to Render
+
+1. Connect the Git repository and create a Blueprint using the root `render.yaml`. The blueprint creates only the free Docker web service; it does not create a database, Redis instance, disk, or paid resource.
+2. Fill the prompted values in Render:
+   - `DATABASE_URL`: Supabase session-pooler connection URI.
+   - `REDIS_URL`: Upstash TLS URL.
+   - `ANTHROPIC_API_KEY`: the key for live AI features.
+   - `SUPABASE_URL`, `SUPABASE_ANON_KEY`, `SUPABASE_SERVICE_ROLE_KEY`: values from the existing Supabase project.
+   - `APP_PUBLIC_URL`: set this after Vercel provides its URL; a temporary local origin is fine before then.
+3. Keep `STORAGE_BACKEND=supabase` and the private `finpilot-files` bucket setting. Render generates `SECRET_KEY`.
+4. Deploy and check `https://<render-service>.onrender.com/health`. The first request after idle may be slow while the free service wakes.
+
+## Deploy the website to Vercel
+
+1. Import the same repository in Vercel and set **Root Directory** to `frontend`.
+2. Use the settings in `frontend/vercel.mjs` (`npm ci`, `npm run build`, output `dist`).
+3. Set these environment variables for Production and Preview:
+   - `FINPILOT_API_ORIGIN`: the HTTPS origin of the Render API, with no path.
    - `VITE_SUPABASE_URL`: the Supabase project URL.
    - `VITE_SUPABASE_ANON_KEY`: the Supabase anon/public key.
-4. Deploy the frontend. Vercel preserves the website origin while proxying `/api/*` to Render, so the browser does not need cross-origin API configuration.
+4. Deploy, then set Render's `APP_PUBLIC_URL` to the resulting Vercel origin. In Supabase Auth URL configuration, set the Site URL and allow the Vercel origin plus `/verify-email` and `/reset-password` redirect routes.
+5. Follow the deployed acceptance process in [TESTING_GUIDE.md](TESTING_GUIDE.md), including signup, email verification, recovery, and API authorization. The local automated suite does not verify real Supabase Auth.
 
-The API origin is checked when Vercel builds. A missing or malformed origin fails the deployment rather than silently sending API calls to the frontend.
+## Release gates and boundaries
 
-## Render setup
-
-1. Connect the Git repository to Render and create a Blueprint from the root `render.yaml`.
-2. Choose the Singapore region, already reflected in the Blueprint, for the API, database, and Redis resources.
-3. Provide the prompted `ANTHROPIC_API_KEY`, `SUPABASE_URL`, `SUPABASE_ANON_KEY`, and `APP_PUBLIC_URL` values. `APP_PUBLIC_URL` can be updated after the Vercel URL is known. Render generates `SECRET_KEY`.
-4. The Blueprint creates a private Redis service, a private PostgreSQL database, and a persistent upload disk. Do not use the free service plans for the finished deployment: Render documents that free web services sleep and lose local files on restart, free Key Value has no persistence, and free Postgres expires after 30 days. The selected always-on/persistent plans have a monthly cost; confirm the current amount in Render before provisioning.
-5. Render starts the API and worker together. Verify `https://<render-service>/health`, then set `FINPILOT_API_ORIGIN` in Vercel to that HTTPS origin.
-6. After Vercel creates the production URL, update Render's `APP_PUBLIC_URL` and the Supabase Auth **Site URL** and redirect allow-list. Include the Vercel origin and the app routes `/verify-email` and `/reset-password`.
-
-## Database initialization gate
-
-The Blueprint deliberately does **not** run migrations automatically. Each Alembic migration must be reviewed before it changes a database. The repository's earlier frontend operating brief restricted migrations to `finpilot_test`; the production database is a new target, so confirm the intended release process before applying the reviewed chain.
-
-After the database has been created and the migration chain has been reviewed and approved, run this manually from the Render service shell:
-
-```sh
-uv run alembic upgrade head
-uv run python -m app.scripts.seed_categories
-```
-
-Do not add this command as a deploy-time hook until that migration process is agreed. Then check `/health`, sign in through the website, create a company, and follow the deployed acceptance process in [TESTING_GUIDE.md](TESTING_GUIDE.md).
-
-## Deployment prerequisites still needing account access
-
-- A Vercel account connected to the GitHub repository.
-- A Render account with approval for its always-on compute/database/Redis costs.
-- A Supabase Auth project whose signup, email verification, recovery, and redirect settings are known to work.
-- An Anthropic API key for live AI workflows.
-- Human review/approval of the current migration chain before it is applied to the new hosted database.
-- A human-created Git commit and push: project instructions reserve commits to the human, and the deployment providers build from the connected repository.
-
-No credentials belong in this repository. Enter them in provider dashboards or local ignored environment files.
+- The project owner must make the human Git commit and push; provider builds use the connected branch.
+- Never put Supabase service-role, database, Redis, or Anthropic credentials in the repository or Vercel frontend variables.
+- Complete the manual migration review and database initialization before trying database-backed product flows.
+- Verify invoice upload, download, and extraction plus CSV import on the deployed site to confirm Supabase Storage integration.
+- Confirm signup, verified-email sign-in, company setup, role gating, and recovery against the actual Supabase configuration.
+- A public URL and healthy service do not by themselves verify AI behavior or financial correctness. Use the test guide's deterministic expected metrics and live-AI checks.
 
 ## Provider references
 
-- [Vite on Vercel](https://vercel.com/docs/frameworks/frontend/vite) describes the SPA fallback needed for direct client-side routes.
-- [Vercel external rewrites](https://vercel.com/docs/routing/rewrites) documents proxying API requests to another origin without changing the browser URL.
-- [Render free-plan limits](https://render.com/docs/free) explains why free services are unsuitable for this always-available setup. Check [current Render pricing](https://render.com/pricing) in the account before creating resources.
+- [Vercel Vite deployment](https://vercel.com/docs/frameworks/frontend/vite)
+- [Vercel external rewrites](https://vercel.com/docs/routing/rewrites)
+- [Render free services](https://render.com/docs/free)
+- [Supabase Storage](https://supabase.com/docs/guides/storage)
+- [Supabase connection strings](https://supabase.com/docs/guides/database/connecting-to-postgres)
+- [Upstash Redis](https://upstash.com/docs/redis/overall/getstarted)

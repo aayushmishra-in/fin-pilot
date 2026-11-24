@@ -36,7 +36,7 @@ from app.models.user import User
 from app.models.weekly_digest import WeeklyDigest, WeeklyDigestDelivery
 from app.services.categorization import category_kind_for_amount
 from app.services.llm_categorization import CategorySuggestion, suggest_category
-from app.services.storage import get_file_path
+from app.services.storage import read_file
 from app.services.weekly_digest import (
     build_weekly_digest_facts,
     deterministic_digest_summary,
@@ -155,14 +155,13 @@ async def extract_invoice(ctx, invoice_id: str, request_id: str | None = None):
         await db.commit()
 
         try:
-            file_path = get_file_path(invoice.file_reference)
-            extension = Path(file_path).suffix.lower()
+            extension = Path(invoice.file_reference).suffix.lower()
             media_type = EXTENSION_TO_MEDIA_TYPE.get(extension)
 
             if media_type is None:
                 raise ValueError(f"Unsupported file type: {extension}")
 
-            file_bytes = file_path.read_bytes()
+            file_bytes = await read_file(invoice.file_reference)
             encoded = base64.standard_b64encode(file_bytes).decode("utf-8")
             block_type = "document" if media_type == "application/pdf" else "image"
 
@@ -1080,7 +1079,7 @@ class WorkerSettings:
             hour={8},
             minute={0},
             second=0,
-            run_at_startup=False,
+            run_at_startup=True,
             unique=True,
         ),
         cron(
@@ -1088,7 +1087,7 @@ class WorkerSettings:
             hour={0, 6, 12, 18},
             minute={0},
             second=0,
-            run_at_startup=False,
+            run_at_startup=True,
             unique=True,
         ),
     ]

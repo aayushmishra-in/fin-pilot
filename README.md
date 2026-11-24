@@ -12,7 +12,7 @@ FinPilot is a multi-tenant financial operations app for small businesses. It tur
 
 ## Project status
 
-The backend and main product screens are implemented. Deployment configuration is prepared for Vercel (web app) and Render (API, worker, PostgreSQL, Redis, and persistent invoice uploads), but live cloud resources have not been provisioned from this checkout. See [deployment steps](docs/DEPLOYMENT.md).
+The backend and main product screens are implemented. Deployment configuration targets Vercel Hobby, Render Free (API and worker), the existing Supabase project (Auth, PostgreSQL, and private file storage), and Upstash Redis Free. Cloud resources have not been provisioned from this checkout. See [deployment steps](docs/DEPLOYMENT.md).
 
 The current checkout uses Supabase Auth. Older architecture notes still describe the previous API-issued JWT flow, and the current auth path needs a real Supabase sign-in smoke test before the project can be called complete. The interview-assessment MCP work remains separate and is not part of FinPilot's release scope.
 
@@ -25,7 +25,7 @@ flowchart LR
   App[FastAPI + arq worker on Render]
   DB[(PostgreSQL)]
   Redis[(Redis)]
-  Files[(Persistent invoice uploads)]
+  Files[(Private Supabase Storage)]
   Auth[Supabase Auth]
   AI[Anthropic API]
 
@@ -38,7 +38,7 @@ flowchart LR
   App --> AI
 ```
 
-The local Docker Compose stack keeps PostgreSQL, Redis, API, worker, and uploaded files together. In the initial hosted setup, the API and arq worker share one Render service and persistent disk so the existing local-file worker handoff remains intact. That service is intentionally single-instance; moving to separate API/worker services requires shared object storage.
+The local Docker Compose stack keeps PostgreSQL, Redis, API, worker, and uploaded files together. Vite serves the frontend separately and proxies API calls locally. Hosted, Vercel serves the frontend, Render runs API plus worker in one free web service, and Supabase Storage keeps files available across Render restarts. Render Free sleeps when idle, so cold starts and delayed scheduled work are expected.
 
 ## Local setup
 
@@ -93,7 +93,7 @@ The MCP assessment tests are excluded from the FinPilot product suite. Automated
 ## Deployment
 
 1. Review [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md), especially the cloud cost and migration gates.
-2. Create the Render resources from `render.yaml`, set its secret values, and complete the reviewed schema setup.
+2. Create the free Render API service from `render.yaml`, connect the existing Supabase database and Upstash Redis, configure private Supabase Storage, and complete the reviewed schema setup.
 3. Set Vercel's project root to `frontend`, then set `FINPILOT_API_ORIGIN` to the Render API origin and configure the two public Supabase build variables.
 4. Copy the resulting Vercel URL back to Render's `APP_PUBLIC_URL` and the Supabase Auth redirect allow-list.
 5. Follow the deployed smoke test in [docs/TESTING_GUIDE.md](docs/TESTING_GUIDE.md).

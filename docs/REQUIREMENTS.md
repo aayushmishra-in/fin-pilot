@@ -16,7 +16,7 @@
 
 ## Planned product scope
 
-**Project spec:** The required backend and frontend scopes are implemented. The categorization evaluation harness exists but has not been run against a real labeled sample. Deployment and production acceptance remain. Stretch forecasting and recommendations follow Tier 1 and Tier 2.
+**Project spec:** The required backend and frontend scopes are implemented. The categorization evaluation harness exists but has not been run against a real labeled sample. A free-tier deployment path is configured, but cloud setup and production acceptance remain. Stretch forecasting and recommendations follow Tier 1 and Tier 2.
 
 ## Constraints and design principles
 
@@ -41,3 +41,4 @@
 - **Open engineering choice:** Categorization confidence calibration from a real labeled sample remains pending.
 - **Resolved:** Python 3.13 is the supported runtime, matching project metadata and the worker image. The container image build remains unverified.
 - **Open release gate:** The current checkout uses Supabase Auth, while the historical frontend architecture brief describes an earlier API-issued JWT flow. A real Supabase sign-in/API authorization smoke test is required before calling the hosted product complete.
+- **Open release gate:** Vercel Hobby + Render Free + Supabase Free + Upstash Redis Free is the selected project deployment target. Render cold starts, Supabase/Upstash quotas, and delayed worker schedules are accepted free-tier limitations; a public deployment has not yet been provisioned or acceptance-tested.

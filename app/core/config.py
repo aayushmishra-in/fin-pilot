@@ -1,3 +1,5 @@
+from typing import Literal
+
 from pydantic_settings import BaseSettings, SettingsConfigDict
 from pydantic import EmailStr, Field, SecretStr, model_validator
 
@@ -6,6 +8,7 @@ class Settings(BaseSettings):
     database_url: str
     redis_url: str
     upload_dir: str = "uploads"
+    storage_backend: Literal["local", "supabase"] = "local"
     secret_key: str
     anthropic_api_key: str
     algorithm: str = "HS256"
@@ -26,6 +29,8 @@ class Settings(BaseSettings):
     digest_email_from: EmailStr | None = None
     supabase_url: str | None = None
     supabase_anon_key: SecretStr | None = None
+    supabase_service_role_key: SecretStr | None = None
+    supabase_storage_bucket: str = "finpilot-files"
     supabase_jwt_secret: SecretStr | None = None
     app_public_url: str = "http://127.0.0.1:5173"
     smtp_host: str | None = None

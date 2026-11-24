@@ -1,6 +1,7 @@
 import mimetypes
 import uuid
 from datetime import UTC, datetime
+from pathlib import Path
 
 from arq import ArqRedis
 from fastapi import (
@@ -13,7 +14,7 @@ from fastapi import (
     Request,
     UploadFile,
 )
-from fastapi.responses import FileResponse
+from fastapi.responses import Response
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -22,7 +23,7 @@ from app.core.permissions import Permission
 from app.models.company_member import CompanyMember
 from app.models.invoice import Invoice, InvoiceDirection, ProcessingStatus
 from app.schemas.invoice import InvoiceCreate, InvoiceRead, InvoiceUpdate
-from app.services.storage import resolve_file_path, save_file
+from app.services.storage import read_file, save_file
 
 router = APIRouter(prefix="/companies/{company_id}/invoices", tags=["invoices"])
 
@@ -126,15 +127,20 @@ async def download_invoice_file(
     ):
         raise HTTPException(status_code=404, detail="Invoice file not found")
     try:
-        file_path = resolve_file_path(invoice.file_reference)
+        content = await read_file(invoice.file_reference)
     except (FileNotFoundError, OSError, ValueError):
         raise HTTPException(status_code=404, detail="Invoice file not found") from None
-    return FileResponse(
-        path=file_path,
-        media_type=mimetypes.guess_type(file_path.name)[0]
+    suffix = Path(invoice.file_reference.rsplit("/", 1)[-1]).suffix.lower()
+    if suffix not in {".pdf", ".png", ".jpg", ".jpeg", ".webp"}:
+        suffix = ""
+    return Response(
+        content=content,
+        media_type=mimetypes.guess_type(suffix)[0]
         or "application/octet-stream",
-        filename=f"invoice-{invoice.id}{file_path.suffix.lower()}",
-        headers={"X-Content-Type-Options": "nosniff"},
+        headers={
+            "Content-Disposition": f'attachment; filename="invoice-{invoice.id}{suffix}"',
+            "X-Content-Type-Options": "nosniff",
+        },
     )
 
 

@@ -8,7 +8,7 @@ Repository facts below were checked against the source and configuration. Histor
 - **Data — verified:** PostgreSQL-oriented SQLAlchemy models and async sessions, `asyncpg`, and Alembic migrations. The Compose database image is PostgreSQL 16.
 - **Jobs — verified:** Redis and an arq worker. Compose defines PostgreSQL, Redis, the API, and the worker; the API and worker mount the same local uploads directory.
 - **LLM — verified:** The invoice, categorization, financial Q&A, anomaly explanation, and weekly digest workers call Anthropic's configurable Haiku-class model. Q&A receives only a question plus allowed expense category names; digest summarization receives computed aggregate facts.
-- **Storage — verified:** Uploaded files are written to a local upload directory; the database stores a file reference. The service boundary is intended to make a future storage-backend change local to that service.
+- **Storage — verified:** Local development stores uploads in the configured upload directory. When `STORAGE_BACKEND=supabase`, the same company-scoped file reference is stored through the Supabase Storage API; API downloads and the invoice worker read through that service boundary.
 - **Auth — current checkout:** The frontend uses Supabase Auth; the API validates Supabase access tokens and maps provider identities to local users. Company memberships carry owner, accountant, or viewer roles. The real Supabase sign-in flow has not been smoke-tested from this checkout.
 
 **Runtime alignment — verified:** `pyproject.toml` requires Python `>=3.13`, and the worker Dockerfile now uses Python 3.13. A Docker image build has not yet been run.
@@ -16,7 +16,7 @@ Repository facts below were checked against the source and configuration. Histor
 ## Current request and job flows
 
 1. Authenticated requests use company membership dependencies for company-scoped endpoints. Resource queries include the company ID in the repository code.
-2. Invoice upload requires a `purchase` or `sale` direction, stores the file locally, creates an invoice row, and enqueues `extract_invoice` through Redis/arq.
+2. Invoice upload requires a `purchase` or `sale` direction, stores the file through the configured storage backend, creates an invoice row, and enqueues `extract_invoice` through Redis/arq.
 3. The invoice worker reads the referenced file, sends it to Anthropic, validates the JSON object and each extracted field, then persists parsed values. Parse or API errors are recorded as failed without persisting partially parsed fields. Missing values remain null and are logged for manual review; invoice processing has no separate `needs_review` status.
 4. Transaction creation applies whole-word, longest-keyword-first rules only when the transaction sign and category kind agree. A miss is committed as `pending` before `categorize_transaction` is enqueued. Queue failures leave the row pending; an arq cron sweeper retries stale pending rows.
 5. The categorization worker loads the transaction first, derives company and direction from the stored row, and reads only global and same-company categories of the matching kind. The Anthropic call uses a forced tool with an enum of category names; the service has no database access. A conditional update applies high-confidence results or sends uncertain/invalid results to review. Retries use arq only, with SDK retries disabled for this client.
@@ -81,7 +81,7 @@ Repository facts below were checked against the source and configuration. Histor
 - `GET /companies/{company_id}/me` returns the authenticated member's role and company context using the same shape as company list entries.
 - The transaction list accepts `offset` (default 0, capped at 100,000) and `limit` (default 50, maximum 200), plus optional inclusive `start_date`/`end_date`, `category_id`, `categorization_status`, `source`, `direction`, and case-insensitive `search`. The response contains `items`, filtered `total`, paging values, and `has_more`. Each request sets a 5-second database statement timeout.
 - The invoice list accepts `skip` (default 0) and `limit` (default 50, maximum 200), and orders newest-first with a stable ID tie-breaker.
-- `GET /companies/{company_id}/invoices/{invoice_id}/download` is member-authenticated and company-scoped. It resolves stored paths within the upload directory and returns an attachment; the database storage reference is not a filesystem download URL.
+- `GET /companies/{company_id}/invoices/{invoice_id}/download` is member-authenticated and company-scoped. It reads the object through the configured storage backend and returns an attachment; the database storage reference is not a public download URL.
 - Invoice direction is selected at upload. `POST /invoices/{invoice_id}/confirm` is owner/accountant-only and idempotent; it is available only after extraction is no longer pending/processing and required fields are present. Confirmed invoice details are locked, while payment status may still change. Confirmation does not count the invoice as cash flow.
 - Invoice payment status is constrained to the `pending`, `paid`, `overdue`, and `cancelled` enum values in request and response schemas.
 - Access tokens expire after 30 minutes. Refresh tokens are intentionally omitted in v1; clients must sign in again after expiry.
@@ -120,8 +120,8 @@ The category/categorization, CSV import fingerprint, and financial metric index 
 
 ## Deployment readiness
 
-- **Prepared, not deployed:** `frontend/vercel.mjs` configures the Vite SPA fallback and proxies `/api/*` to `FINPILOT_API_ORIGIN`. `render.yaml` describes the API/worker service, PostgreSQL, Redis/Key Value, and a persistent upload disk.
-- The first hosted layout runs the API and worker in one Render web service so both processes can read the same upload disk. It is a single-instance project deployment; separating the services requires shared object storage.
+- **Prepared, not deployed:** `frontend/vercel.mjs` configures the Vite SPA fallback and proxies `/api/*` to `FINPILOT_API_ORIGIN`. `render.yaml` describes a free API/worker service and receives Supabase database/storage and Upstash Redis URLs as environment values.
+- The hosted target runs API and worker in one Render Free web service. Supabase Storage keeps uploads available across service restarts. Render sleep means cold starts and delayed scheduled work; startup sweeps recover the weekly digest and pending deliveries after wake.
 - The Render Blueprint does not auto-apply Alembic migrations. Migration review and explicit approval are required before the hosted schema is initialized.
 - **Verified locally — 2026-11-24:** Docker API and worker images build; Compose starts PostgreSQL, Redis, API, and worker; `/health` returns 200; the database-backed product suite passes 178 tests. Docker context exclusions keep frontend dependencies, tests, and generated artifacts out of the backend image.
 - **Not verified:** External Supabase authentication, live Anthropic calls, cloud service provisioning, hosted migration execution, and production URL. Frontend E2E currently mocks Supabase and API requests.
